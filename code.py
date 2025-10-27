@@ -116,7 +116,96 @@ def get_profit_potential(data, info, horizon_type='short'):
     macd = calculate_macd(data)
     volatility = calculate_volatility(data, window=14)
     volume_surge = calculate_volume_surge(data, window=20)
+if selected_ticker:
+    st.divider()
+    st.header(f"📊 Technical Chart: {selected_ticker}")
     
+    data, info = fetch_stock_data(selected_ticker, '6mo')
+    
+    if not data.empty:
+        # Calculate indicators for overlay
+        data['SMA_20'] = data['Close'].rolling(window=20).mean()
+        data['SMA_50'] = data['Close'].rolling(window=50).mean()
+        
+        fig = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.03,
+            subplot_titles=(f'{selected_ticker} Price', 'Volume'),
+            row_heights=[0.7, 0.3]
+        )
+        
+        # Candlestick
+        fig.add_trace(
+            go.Candlestick(
+                x=data.index,
+                open=data['Open'],
+                high=data['High'],
+                low=data['Low'],
+                close=data['Close'],
+                name='Price'
+            ),
+            row=1, col=1
+        )
+        
+        # Moving averages
+        fig.add_trace(
+            go.Scatter(
+                x=data.index, 
+                y=data['SMA_20'], 
+                name='SMA 20',
+                line=dict(color='orange', width=1)
+            ),
+            row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=data.index, 
+                y=data['SMA_50'], 
+                name='SMA 50',
+                line=dict(color='blue', width=1)
+            ),
+            row=1, col=1
+        )
+        
+        # Volume
+        colors = ['red' if data['Close'].iloc[i] < data['Open'].iloc[i] else 'green' 
+                  for i in range(len(data))]
+        fig.add_trace(
+            go.Bar(
+                x=data.index, 
+                y=data['Volume'], 
+                name='Volume',
+                marker_color=colors,
+                opacity=0.5
+            ),
+            row=2, col=1
+        )
+        
+        fig.update_layout(
+            xaxis_rangeslider_visible=False,
+            height=700,
+            showlegend=True,
+            hovermode='x unified'
+        )
+        fig.update_xaxes(title_text="Date", row=2, col=1)
+        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+        fig.update_yaxes(title_text="Volume", row=2, col=1)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show metrics
+        col_a, col_b, col_c, col_d = st.columns(4)
+        potential_short, metrics_short = get_profit_potential(data, info, 'short')
+        potential_mid, metrics_mid = get_profit_potential(data, info, 'mid')
+        potential_long, metrics_long = get_profit_potential(data, info, 'long')
+        
+        col_a.metric("Short-Term Potential", f"{potential_short:.2f}%")
+        col_b.metric("Mid-Term Potential", f"{potential_mid:.2f}%")
+        col_c.metric("Long-Term Potential", f"{potential_long:.2f}%")
+        col_d.metric("Current RSI", f"{metrics_short.get('RSI', 50):.1f}")
+    else:
+        st.error(f"Unable to load data for {selected_ticker}")    
     # Horizon-specific calculations
     if horizon_type == 'short':
         # Short-term: Focus on momentum, volume, and recent volatility
