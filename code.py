@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 
 # Hardcoded universes (expandable)
 
-
 # Initialize session state for applied targets
 if 'applied_short' not in st.session_state:
     st.session_state.applied_short = 5.0
@@ -116,96 +115,7 @@ def get_profit_potential(data, info, horizon_type='short'):
     macd = calculate_macd(data)
     volatility = calculate_volatility(data, window=14)
     volume_surge = calculate_volume_surge(data, window=20)
-if selected_ticker:
-    st.divider()
-    st.header(f"📊 Technical Chart: {selected_ticker}")
     
-    data, info = fetch_stock_data(selected_ticker, '6mo')
-    
-    if not data.empty:
-        # Calculate indicators for overlay
-        data['SMA_20'] = data['Close'].rolling(window=20).mean()
-        data['SMA_50'] = data['Close'].rolling(window=50).mean()
-        
-        fig = make_subplots(
-            rows=2, cols=1, 
-            shared_xaxes=True, 
-            vertical_spacing=0.03,
-            subplot_titles=(f'{selected_ticker} Price', 'Volume'),
-            row_heights=[0.7, 0.3]
-        )
-        
-        # Candlestick
-        fig.add_trace(
-            go.Candlestick(
-                x=data.index,
-                open=data['Open'],
-                high=data['High'],
-                low=data['Low'],
-                close=data['Close'],
-                name='Price'
-            ),
-            row=1, col=1
-        )
-        
-        # Moving averages
-        fig.add_trace(
-            go.Scatter(
-                x=data.index, 
-                y=data['SMA_20'], 
-                name='SMA 20',
-                line=dict(color='orange', width=1)
-            ),
-            row=1, col=1
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=data.index, 
-                y=data['SMA_50'], 
-                name='SMA 50',
-                line=dict(color='blue', width=1)
-            ),
-            row=1, col=1
-        )
-        
-        # Volume
-        colors = ['red' if data['Close'].iloc[i] < data['Open'].iloc[i] else 'green' 
-                  for i in range(len(data))]
-        fig.add_trace(
-            go.Bar(
-                x=data.index, 
-                y=data['Volume'], 
-                name='Volume',
-                marker_color=colors,
-                opacity=0.5
-            ),
-            row=2, col=1
-        )
-        
-        fig.update_layout(
-            xaxis_rangeslider_visible=False,
-            height=700,
-            showlegend=True,
-            hovermode='x unified'
-        )
-        fig.update_xaxes(title_text="Date", row=2, col=1)
-        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
-        fig.update_yaxes(title_text="Volume", row=2, col=1)
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Show metrics
-        col_a, col_b, col_c, col_d = st.columns(4)
-        potential_short, metrics_short = get_profit_potential(data, info, 'short')
-        potential_mid, metrics_mid = get_profit_potential(data, info, 'mid')
-        potential_long, metrics_long = get_profit_potential(data, info, 'long')
-        
-        col_a.metric("Short-Term Potential", f"{potential_short:.2f}%")
-        col_b.metric("Mid-Term Potential", f"{potential_mid:.2f}%")
-        col_c.metric("Long-Term Potential", f"{potential_long:.2f}%")
-        col_d.metric("Current RSI", f"{metrics_short.get('RSI', 50):.1f}")
-    else:
-        st.error(f"Unable to load data for {selected_ticker}")    
     # Horizon-specific calculations
     if horizon_type == 'short':
         # Short-term: Focus on momentum, volume, and recent volatility
@@ -463,6 +373,115 @@ def display_table(tickers, cap_type, horizon_type, target, col):
 display_table(SMALL_CAP_TICKERS, 'Small', 'short', st.session_state.applied_short, col1)
 display_table(MID_CAP_TICKERS, 'Mid', 'mid', st.session_state.applied_mid, col2)
 display_table(LARGE_CAP_TICKERS, 'Large', 'long', st.session_state.applied_long, col3)
+
+# Candlestick Chart
+        
+        # Moving averages
+        fig.add_trace(
+            go.Scatter(
+                x=data.index, 
+                y=data['SMA_20'], 
+                name='SMA 20',
+                line=dict(color='orange', width=1)
+            ),
+            row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=data.index, 
+                y=data['SMA_50'], 
+                name='SMA 50',
+                line=dict(color='blue', width=1)
+            ),
+            row=1, col=1
+        )
+        
+        # Volume
+        colors = ['red' if data['Close'].iloc[i] < data['Open'].iloc[i] else 'green' 
+                  for i in range(len(data))]
+        fig.add_trace(
+            go.Bar(
+                x=data.index, 
+                y=data['Volume'], 
+                name='Volume',
+                marker_color=colors,
+                opacity=0.5
+            ),
+            row=2, col=1
+        )
+        
+        fig.update_layout(
+            xaxis_rangeslider_visible=False,
+            height=700,
+            showlegend=True,
+            hovermode='x unified'
+        )
+        fig.update_xaxes(title_text="Date", row=2, col=1)
+        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+        fig.update_yaxes(title_text="Volume", row=2, col=1)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show metrics
+        col_a, col_b, col_c, col_d = st.columns(4)
+        potential_short, metrics_short = get_profit_potential(data, info, 'short')
+        potential_mid, metrics_mid = get_profit_potential(data, info, 'mid')
+        potential_long, metrics_long = get_profit_potential(data, info, 'long')
+        
+        col_a.metric("Short-Term Potential", f"{potential_short:.2f}%")
+        col_b.metric("Mid-Term Potential", f"{potential_mid:.2f}%")
+        col_c.metric("Long-Term Potential", f"{potential_long:.2f}%")
+        col_d.metric("Current RSI", f"{metrics_short.get('RSI', 50):.1f}")
+    else:
+        st.error(f"Unable to load data for {selected_ticker}")
+
+# Heatmap of All 99
+st.divider()
+st.header("🔥 Profit Potential Heatmap (All 99 Stocks)")
+
+heatmap_data = []
+for ticker in all_tickers:
+    data, info = fetch_stock_data(ticker)
+    if not data.empty:
+        # Use mid-term for balanced view
+        potential, _ = get_profit_potential(data, info, 'mid')
+        heatmap_data.append({'Ticker': ticker, 'Potential %': potential})
+
+if heatmap_data:
+    df_heat = pd.DataFrame(heatmap_data)
+    
+    if not df_heat.empty:
+        # Create chunks for better visualization
+        chunk_size = 33
+        chunks = [df_heat.iloc[i:i+chunk_size] for i in range(0, len(df_heat), chunk_size)]
+        
+        fig, axes = plt.subplots(len(chunks), 1, figsize=(16, 4*len(chunks)))
+        if len(chunks) == 1:
+            axes = [axes]
+        
+        for idx, chunk in enumerate(chunks):
+            pivot = chunk.set_index('Ticker')['Potential %'].to_frame().T
+            sns.heatmap(
+                pivot, 
+                annot=True, 
+                cmap='RdYlGn', 
+                center=0, 
+                fmt='.1f',
+                ax=axes[idx],
+                cbar_kws={'label': 'Potential %'},
+                vmin=-20,
+                vmax=40
+            )
+            cap_label = ['Small Cap', 'Mid Cap', 'Large Cap'][idx] if idx < 3 else ''
+            axes[idx].set_title(f'{cap_label} Stocks', fontsize=12, fontweight='bold')
+            axes[idx].set_ylabel('')
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+    else:
+        st.warning("Insufficient data for heatmap.")
+else:
+    st.warning("Unable to generate heatmap—check API connection.")
 
 # Footer
 st.divider()
