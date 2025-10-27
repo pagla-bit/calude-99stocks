@@ -279,10 +279,6 @@ with st.sidebar:
     st.caption("• Short: Recent momentum + volume + RSI\n• Mid: Trend strength + MACD + positioning\n• Long: Extended trends + beta + acceleration")
 
 # Selected stock for chart
-all_tickers = SMALL_CAP_TICKERS + MID_CAP_TICKERS + LARGE_CAP_TICKERS
-selected_ticker = st.sidebar.selectbox("View Candlestick Chart", [""] + all_tickers)
-
-col1, col2, col3 = st.columns(3)
 
 # Function to build and display table
 @st.cache_data(ttl=300)
