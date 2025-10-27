@@ -478,54 +478,6 @@ if selected_ticker:
     else:
         st.error(f"Unable to load data for {selected_ticker}")
 
-# Heatmap of All 99
-st.divider()
-st.header("🔥 Profit Potential Heatmap (All 99 Stocks)")
-
-heatmap_data = []
-for ticker in all_tickers:
-    data, info = fetch_stock_data(ticker)
-    if not data.empty:
-        # Use mid-term for balanced view
-        potential, _ = get_profit_potential(data, info, 'mid')
-        heatmap_data.append({'Ticker': ticker, 'Potential %': potential})
-
-if heatmap_data:
-    df_heat = pd.DataFrame(heatmap_data)
-    
-    if not df_heat.empty:
-        # Create chunks for better visualization
-        chunk_size = 33
-        chunks = [df_heat.iloc[i:i+chunk_size] for i in range(0, len(df_heat), chunk_size)]
-        
-        fig, axes = plt.subplots(len(chunks), 1, figsize=(16, 4*len(chunks)))
-        if len(chunks) == 1:
-            axes = [axes]
-        
-        for idx, chunk in enumerate(chunks):
-            pivot = chunk.set_index('Ticker')['Potential %'].to_frame().T
-            sns.heatmap(
-                pivot, 
-                annot=True, 
-                cmap='RdYlGn', 
-                center=0, 
-                fmt='.1f',
-                ax=axes[idx],
-                cbar_kws={'label': 'Potential %'},
-                vmin=-20,
-                vmax=40
-            )
-            cap_label = ['Small Cap', 'Mid Cap', 'Large Cap'][idx] if idx < 3 else ''
-            axes[idx].set_title(f'{cap_label} Stocks', fontsize=12, fontweight='bold')
-            axes[idx].set_ylabel('')
-        
-        plt.tight_layout()
-        st.pyplot(fig)
-    else:
-        st.warning("Insufficient data for heatmap.")
-else:
-    st.warning("Unable to generate heatmap—check API connection.")
-
 # Footer
 st.divider()
 st.caption(f"📡 Data via yfinance | Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Cache TTL: 5 minutes")
