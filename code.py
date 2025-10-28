@@ -5,15 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
-import requests
-from bs4 import BeautifulSoup
 import time
-
-# Market cap thresholds (in billions)
-SMALL_CAP_MAX = 2.0
-MID_CAP_MIN = 2.0
-MID_CAP_MAX = 10.0
-LARGE_CAP_MIN = 10.0
 
 # Initialize session state
 if 'applied_short' not in st.session_state:
@@ -22,75 +14,16 @@ if 'applied_mid' not in st.session_state:
     st.session_state.applied_mid = 10.0
 if 'applied_long' not in st.session_state:
     st.session_state.applied_long = 30.0
-if 'stock_universe' not in st.session_state:
-    st.session_state.stock_universe = None
+if 'small_cap_tickers' not in st.session_state:
+    st.session_state.small_cap_tickers = ""
+if 'mid_cap_tickers' not in st.session_state:
+    st.session_state.mid_cap_tickers = ""
+if 'large_cap_tickers' not in st.session_state:
+    st.session_state.large_cap_tickers = ""
+if 'scan_results' not in st.session_state:
+    st.session_state.scan_results = None
 if 'last_scan_time' not in st.session_state:
     st.session_state.last_scan_time = None
-
-@st.cache_data(ttl=3600)  # Cache for 1 hour
-def get_sp500_tickers():
-    """Fetch S&P 500 ticker list from Wikipedia"""
-    try:
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        response = requests.get(url, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'id': 'constituents'})
-        df = pd.read_html(str(table))[0]
-        tickers = df['Symbol'].str.replace('.', '-').tolist()
-        return tickers
-    except Exception as e:
-        st.error(f"Failed to fetch S&P 500 tickers: {str(e)}")
-        return []
-
-@st.cache_data(ttl=3600)
-def get_sp400_tickers():
-    """Fetch S&P 400 (Mid Cap) ticker list from Wikipedia"""
-    try:
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_400_companies'
-        response = requests.get(url, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'id': 'constituents'})
-        df = pd.read_html(str(table))[0]
-        tickers = df['Symbol'].str.replace('.', '-').tolist()
-        return tickers
-    except Exception as e:
-        st.error(f"Failed to fetch S&P 400 tickers: {str(e)}")
-        return []
-
-@st.cache_data(ttl=3600)
-def get_russell2000_tickers():
-    """Fetch Russell 2000 ticker list from iShares IWM holdings"""
-    try:
-        # IWM is the Russell 2000 ETF
-        url = 'https://www.ishares.com/us/products/239710/ishares-russell-2000-etf'
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        # Alternative: Use a predefined list or CSV
-        # For now, we'll use a simpler approach - get from yfinance screener
-        st.warning("Russell 2000 full list unavailable. Using S&P 600 small cap as proxy.")
-        
-        # Fetch S&P 600 Small Cap instead
-        url_sp600 = 'https://en.wikipedia.org/wiki/List_of_S%26P_600_companies'
-        response = requests.get(url_sp600, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'class': 'wikitable sortable'})
-        df = pd.read_html(str(table))[0]
-        tickers = df['Symbol'].str.replace('.', '-').tolist()
-        return tickers[:500]  # Limit to top 500
-    except Exception as e:
-        st.error(f"Failed to fetch Russell 2000 tickers: {str(e)}")
-        return []
-
-def fetch_tickers_by_index(index_name):
-    """Fetch tickers based on index selection"""
-    if index_name == "S&P 500":
-        return get_sp500_tickers()
-    elif index_name == "S&P 400":
-        return get_sp400_tickers()
-    elif index_name == "Russell 2000":
-        return get_russell2000_tickers()
-    return []
 
 @st.cache_data(ttl=600)
 def fetch_stock_data(ticker, period='6mo'):
@@ -103,30 +36,6 @@ def fetch_stock_data(ticker, period='6mo'):
         return data, info
     except Exception as e:
         return pd.DataFrame(), {}
-
-def get_market_cap_billions(info):
-    """Extract market cap in billions"""
-    try:
-        market_cap = info.get('marketCap', 0)
-        if market_cap:
-            return market_cap / 1e9
-        return 0
-    except:
-        return 0
-
-def categorize_by_market_cap(ticker, info):
-    """Categorize stock by market cap"""
-    market_cap = get_market_cap_billions(info)
-    
-    if market_cap == 0:
-        return None
-    elif market_cap < SMALL_CAP_MAX:
-        return 'small'
-    elif MID_CAP_MIN <= market_cap <= MID_CAP_MAX:
-        return 'mid'
-    elif market_cap > LARGE_CAP_MIN:
-        return 'large'
-    return None
 
 def safe_float(value, default=0.0):
     """Convert pandas Series or any value to float safely"""
@@ -328,76 +237,39 @@ def calculate_composite_score(potential, metrics, horizon_type):
     
     return safe_float(score, 0.0)
 
-def scan_stocks_from_index(index_list, progress_bar=None, status_text=None):
-    """
-    Scan stocks from index and categorize by market cap
-    Returns dict with 'small', 'mid', 'large' categories
-    """
-    categorized = {'small': [], 'mid': [], 'large': []}
-    total = len(index_list)
+def parse_tickers(ticker_string):
+    """Parse comma-separated ticker string into list"""
+    if not ticker_string or not ticker_string.strip():
+        return []
     
-    for idx, ticker in enumerate(index_list):
+    # Split by comma, space, or newline
+    tickers = ticker_string.replace('\n', ',').replace(' ', ',').split(',')
+    # Clean and uppercase
+    tickers = [t.strip().upper() for t in tickers if t.strip()]
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_tickers = []
+    for t in tickers:
+        if t not in seen:
+            seen.add(t)
+            unique_tickers.append(t)
+    return unique_tickers
+
+def scan_tickers(ticker_list, horizon_type, target_threshold, progress_bar=None, status_text=None):
+    """Scan list of tickers and return opportunities"""
+    df_list = []
+    total = len(ticker_list)
+    
+    for idx, ticker in enumerate(ticker_list):
         if progress_bar:
             progress_bar.progress((idx + 1) / total)
         if status_text:
             status_text.text(f"Scanning {ticker}... ({idx + 1}/{total})")
         
-        data, info = fetch_stock_data(ticker, period='3mo')
+        data, info = fetch_stock_data(ticker, period='6mo')
         
         if data.empty or len(data) < 20:
             continue
-        
-        # Get average volume
-        avg_volume = safe_float(data['Volume'].mean())
-        
-        # Categorize by market cap
-        category = categorize_by_market_cap(ticker, info)
-        
-        if category:
-            categorized[category].append({
-                'ticker': ticker,
-                'data': data,
-                'info': info,
-                'avg_volume': avg_volume,
-                'market_cap': get_market_cap_billions(info)
-            })
-    
-    # Sort by volume and take top 500 from each category
-    for category in categorized:
-        categorized[category] = sorted(
-            categorized[category], 
-            key=lambda x: x['avg_volume'], 
-            reverse=True
-        )[:500]
-    
-    return categorized
-
-def scan_stocks_by_screener(market_cap_filter, progress_bar=None, status_text=None):
-    """
-    Scan stocks using Yahoo Finance screener criteria
-    This is a placeholder - Yahoo screener API is limited
-    """
-    st.warning("Yahoo screener option coming soon. Using index-based scan for now.")
-    
-    # For now, fall back to index-based scan
-    if market_cap_filter == 'small':
-        index_list = get_russell2000_tickers()
-    elif market_cap_filter == 'mid':
-        index_list = get_sp400_tickers()
-    else:
-        index_list = get_sp500_tickers()
-    
-    return scan_stocks_from_index(index_list, progress_bar, status_text)
-
-def build_opportunity_table(stock_list, horizon_type, target_threshold):
-    """Build dataframe of top opportunities"""
-    df_list = []
-    
-    for stock_info in stock_list:
-        ticker = stock_info['ticker']
-        data = stock_info['data']
-        info = stock_info['info']
-        market_cap = stock_info['market_cap']
         
         # Calculate potential and metrics
         potential, metrics = get_profit_potential(data, info, horizon_type)
@@ -410,6 +282,10 @@ def build_opportunity_table(stock_list, horizon_type, target_threshold):
         score = calculate_composite_score(potential, metrics, horizon_type)
         
         current_price = safe_float(data['Close'].iloc[-1])
+        
+        # Get market cap
+        market_cap = info.get('marketCap', 0)
+        market_cap_b = market_cap / 1e9 if market_cap else 0
         
         # Get primary additional metric
         if horizon_type == 'short':
@@ -426,7 +302,7 @@ def build_opportunity_table(stock_list, horizon_type, target_threshold):
             'Ticker': ticker,
             'Name': info.get('longName', ticker)[:30],
             'Price': round(current_price, 2),
-            'Mkt Cap ($B)': round(market_cap, 2),
+            'Mkt Cap ($B)': round(market_cap_b, 2),
             'Potential %': round(potential, 2),
             'Score': round(score, 2),
             add_metric_name: round(add_metric_value, 2)
@@ -439,38 +315,63 @@ def build_opportunity_table(stock_list, horizon_type, target_threshold):
     return pd.DataFrame()
 
 # Streamlit App
-st.set_page_config(page_title="Dynamic Stock Scanner", layout="wide")
-st.title("🔍 Dynamic Stock Opportunity Scanner")
-st.caption("Scan stocks by index or screener criteria, categorized by market cap and time horizon")
+st.set_page_config(page_title="Stock Opportunity Scanner", layout="wide")
+st.title("🔍 Stock Opportunity Scanner")
+st.caption("Input your tickers, set criteria, and discover top opportunities")
 
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # Scan method selection
-    st.subheader("Stock Discovery Method")
-    scan_method = st.radio(
-        "Choose scan method:",
-        ["Option A: Index-Based", "Option B: Yahoo Screener"],
-        help="Option A: Scan full index lists\nOption B: Use Yahoo Finance screener"
-    )
+    st.subheader("📝 Input Tickers")
+    st.caption("Enter comma-separated tickers (e.g., AAPL, MSFT, GOOGL)")
     
-    st.divider()
+    # Small cap input
+    with st.expander("🔹 Small Cap Tickers", expanded=True):
+        small_tickers_input = st.text_area(
+            "Enter small cap tickers:",
+            value=st.session_state.small_cap_tickers,
+            height=100,
+            key="small_input",
+            placeholder="AVAH, STRA, ARLO, LFST, ASGN..."
+        )
+        if st.button("Load Sample Small Caps"):
+            sample_small = "AVAH, STRA, ARLO, LFST, ASGN, ROCK, VOYG, DQ, SYBT, PRGS, DX, EVTC, DV, WLY, RCUS, SDRL, PACS, BELFB, SLDE, CLOV, NTCT, LQDA, DXPE, PLUS, NWN, VERA, ANIP, FIHL, ADNT, TRIP, SCS, CXM, ADEA"
+            st.session_state.small_cap_tickers = sample_small
+            st.rerun()
     
-    # Index selection for Option A
-    if scan_method == "Option A: Index-Based":
-        st.subheader("Select Indices to Scan")
-        scan_russell = st.checkbox("Russell 2000 (Small Cap)", value=True)
-        scan_sp400 = st.checkbox("S&P 400 (Mid Cap)", value=True)
-        scan_sp500 = st.checkbox("S&P 500 (Large Cap)", value=True)
-    else:
-        st.subheader("Screener Filters")
-        st.info("Yahoo screener integration in development")
+    # Mid cap input
+    with st.expander("🔸 Mid Cap Tickers", expanded=True):
+        mid_tickers_input = st.text_area(
+            "Enter mid cap tickers:",
+            value=st.session_state.mid_cap_tickers,
+            height=100,
+            key="mid_input",
+            placeholder="CMA, IPG, PEN, ORI, AIT..."
+        )
+        if st.button("Load Sample Mid Caps"):
+            sample_mid = "CMA, IPG, PEN, ORI, AIT, KNSL, OTEX, ALGN, RRX, IDCC, CRL, OVV, SARO, AOS, DCI, CUBE, FRHC, PSO, MKSI, SPXC, EDU, BWA, MOS, AUR, LSCC, DDS, FIGR, EGP, FYBR, MDGL, ESTC, UWMC, RGEN"
+            st.session_state.mid_cap_tickers = sample_mid
+            st.rerun()
+    
+    # Large cap input
+    with st.expander("🔺 Large Cap Tickers", expanded=True):
+        large_tickers_input = st.text_area(
+            "Enter large cap tickers:",
+            value=st.session_state.large_cap_tickers,
+            height=100,
+            key="large_input",
+            placeholder="UBER, ANET, NOW, LRCX, PDD..."
+        )
+        if st.button("Load Sample Large Caps"):
+            sample_large = "UBER, ANET, NOW, LRCX, PDD, ISRG, INTU, BX, ARM, INTC, AMAT, T, C, BLK, HDB, NEE, SONY, SCHW, BKNG, MUFG, BA, APH, VZ, KLAC, TJX, GEV, AMGN, ACN, DHR, UL, TXN, SPGI, BSX"
+            st.session_state.large_cap_tickers = sample_large
+            st.rerun()
     
     st.divider()
     
     # Profit targets
-    st.subheader("Profit Target Thresholds")
+    st.subheader("🎯 Profit Target Thresholds")
     temp_short = st.slider("Short-Term (1-3 days)", 0.0, 50.0, float(st.session_state.applied_short), step=0.5)
     temp_mid = st.slider("Mid-Term (1-2 weeks)", 0.0, 50.0, float(st.session_state.applied_mid), step=0.5)
     temp_long = st.slider("Long-Term (1-3 months)", 0.0, 100.0, float(st.session_state.applied_long), step=1.0)
@@ -481,41 +382,63 @@ with st.sidebar:
     
     # Scan button
     if st.button("🚀 Start Scan", type="primary", use_container_width=True):
+        # Update session state
         st.session_state.applied_short = temp_short
         st.session_state.applied_mid = temp_mid
         st.session_state.applied_long = temp_long
+        st.session_state.small_cap_tickers = small_tickers_input
+        st.session_state.mid_cap_tickers = mid_tickers_input
+        st.session_state.large_cap_tickers = large_tickers_input
         
-        # Clear cache
-        st.cache_data.clear()
+        # Parse tickers
+        small_list = parse_tickers(small_tickers_input)
+        mid_list = parse_tickers(mid_tickers_input)
+        large_list = parse_tickers(large_tickers_input)
         
-        # Start scanning
-        with st.spinner("Scanning stocks..."):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+        if not small_list and not mid_list and not large_list:
+            st.error("❌ Please enter at least one ticker in any category!")
+        else:
+            # Clear cache
+            st.cache_data.clear()
             
-            if scan_method == "Option A: Index-Based":
-                all_tickers = []
-                if scan_russell:
-                    all_tickers.extend(get_russell2000_tickers())
-                if scan_sp400:
-                    all_tickers.extend(get_sp400_tickers())
-                if scan_sp500:
-                    all_tickers.extend(get_sp500_tickers())
-                
-                # Remove duplicates
-                all_tickers = list(set(all_tickers))
-                
-                st.session_state.stock_universe = scan_stocks_from_index(
-                    all_tickers, progress_bar, status_text
-                )
-            else:
-                # Option B - screener based (placeholder)
-                st.session_state.stock_universe = scan_stocks_by_screener(
-                    'all', progress_bar, status_text
-                )
+            # Start scanning
+            results = {'small': None, 'mid': None, 'large': None}
             
-            progress_bar.empty()
-            status_text.empty()
+            with st.spinner("Scanning stocks..."):
+                # Scan small caps
+                if small_list:
+                    st.info(f"Scanning {len(small_list)} small cap stocks...")
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    results['small'] = scan_tickers(
+                        small_list, 'short', temp_short, progress_bar, status_text
+                    )
+                    progress_bar.empty()
+                    status_text.empty()
+                
+                # Scan mid caps
+                if mid_list:
+                    st.info(f"Scanning {len(mid_list)} mid cap stocks...")
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    results['mid'] = scan_tickers(
+                        mid_list, 'mid', temp_mid, progress_bar, status_text
+                    )
+                    progress_bar.empty()
+                    status_text.empty()
+                
+                # Scan large caps
+                if large_list:
+                    st.info(f"Scanning {len(large_list)} large cap stocks...")
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    results['large'] = scan_tickers(
+                        large_list, 'long', temp_long, progress_bar, status_text
+                    )
+                    progress_bar.empty()
+                    status_text.empty()
+            
+            st.session_state.scan_results = results
             st.session_state.last_scan_time = datetime.now()
             st.success("✅ Scan complete!")
             st.rerun()
@@ -525,91 +448,105 @@ with st.sidebar:
         st.caption(f"Last scan: {st.session_state.last_scan_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     st.divider()
-    st.caption("**Market Cap Definitions:**\n- Small: < $2B\n- Mid: $2B - $10B\n- Large: > $10B")
+    st.caption("""
+    **How It Works:**
+    1. Enter tickers for each category
+    2. Set minimum profit targets
+    3. Click "Start Scan"
+    4. Review top 33 opportunities
+    """)
 
 # Main content
-if st.session_state.stock_universe is None:
-    st.info("👈 Configure your scan settings and click 'Start Scan' to begin")
-    st.markdown("""
-    ### How it works:
-    1. **Choose discovery method**: Index-based or Yahoo screener
-    2. **Set profit targets**: Minimum expected returns for each time horizon
-    3. **Click Start Scan**: The app will analyze stocks and categorize them
-    4. **Review results**: Top 33 opportunities per category
+if st.session_state.scan_results is None:
+    st.info("👈 Enter your tickers in the sidebar and click 'Start Scan' to begin")
     
-    ### Categories:
-    - **Small Cap (<$2B)**: Optimized for 1-3 day trades
-    - **Mid Cap ($2B-$10B)**: Optimized for 1-2 week holds
-    - **Large Cap (>$10B)**: Optimized for 1-3 month positions
-    """)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("""
+        ### 📊 Small Cap
+        **Time Horizon:** 1-3 days  
+        **Focus:** Short-term momentum, volume surges, quick moves
+        
+        **Algorithm:**
+        - Distance to recent high (40%)
+        - 5-day momentum (30%)
+        - Volume surge (20%)
+        - RSI positioning (10%)
+        """)
+    
+    with col2:
+        st.markdown("""
+        ### 📈 Mid Cap
+        **Time Horizon:** 1-2 weeks  
+        **Focus:** Trend strength, technical signals
+        
+        **Algorithm:**
+        - 14-day momentum (40%)
+        - MACD trend (30%)
+        - RSI signals (20%)
+        - Volume (10%)
+        """)
+    
+    with col3:
+        st.markdown("""
+        ### 📉 Large Cap
+        **Time Horizon:** 1-3 months  
+        **Focus:** Extended trends, fundamentals
+        
+        **Algorithm:**
+        - 60-day momentum + beta (50%)
+        - Trend acceleration (30%)
+        - RSI positioning (20%)
+        """)
 else:
     # Display results
+    results = st.session_state.scan_results
     col1, col2, col3 = st.columns(3)
-    
-    universe = st.session_state.stock_universe
     
     # Small Cap Table
     with col1:
-        st.subheader("📊 Small Cap (< $2B)")
+        st.subheader("📊 Small Cap Opportunities")
         st.caption(f"Short-term (1-3 days) • Target: {st.session_state.applied_short}%")
         
-        if universe['small']:
-            df_small = build_opportunity_table(
-                universe['small'], 
-                'short', 
-                st.session_state.applied_short
-            )
-            if not df_small.empty:
-                st.dataframe(df_small, use_container_width=True, height=400, hide_index=True)
-                st.caption(f"Showing {len(df_small)} opportunities")
-            else:
-                st.warning("No stocks meet criteria")
+        if results['small'] is not None and not results['small'].empty:
+            st.dataframe(results['small'], use_container_width=True, height=500, hide_index=True)
+            st.caption(f"✅ Showing {len(results['small'])} opportunities")
         else:
-            st.info("No small cap stocks found. Try scanning Russell 2000.")
+            st.warning("⚠️ No stocks meet criteria. Try lowering the target threshold.")
     
     # Mid Cap Table
     with col2:
-        st.subheader("📈 Mid Cap ($2B-$10B)")
+        st.subheader("📈 Mid Cap Opportunities")
         st.caption(f"Mid-term (1-2 weeks) • Target: {st.session_state.applied_mid}%")
         
-        if universe['mid']:
-            df_mid = build_opportunity_table(
-                universe['mid'], 
-                'mid', 
-                st.session_state.applied_mid
-            )
-            if not df_mid.empty:
-                st.dataframe(df_mid, use_container_width=True, height=400, hide_index=True)
-                st.caption(f"Showing {len(df_mid)} opportunities")
-            else:
-                st.warning("No stocks meet criteria")
+        if results['mid'] is not None and not results['mid'].empty:
+            st.dataframe(results['mid'], use_container_width=True, height=500, hide_index=True)
+            st.caption(f"✅ Showing {len(results['mid'])} opportunities")
         else:
-            st.info("No mid cap stocks found. Try scanning S&P 400.")
+            st.warning("⚠️ No stocks meet criteria. Try lowering the target threshold.")
     
     # Large Cap Table
     with col3:
-        st.subheader("📉 Large Cap (> $10B)")
+        st.subheader("📉 Large Cap Opportunities")
         st.caption(f"Long-term (1-3 months) • Target: {st.session_state.applied_long}%")
         
-        if universe['large']:
-            df_large = build_opportunity_table(
-                universe['large'], 
-                'long', 
-                st.session_state.applied_long
-            )
-            if not df_large.empty:
-                st.dataframe(df_large, use_container_width=True, height=400, hide_index=True)
-                st.caption(f"Showing {len(df_large)} opportunities")
-            else:
-                st.warning("No stocks meet criteria")
+        if results['large'] is not None and not results['large'].empty:
+            st.dataframe(results['large'], use_container_width=True, height=500, hide_index=True)
+            st.caption(f"✅ Showing {len(results['large'])} opportunities")
         else:
-            st.info("No large cap stocks found. Try scanning S&P 500.")
+            st.warning("⚠️ No stocks meet criteria. Try lowering the target threshold.")
     
     # Chart section
     st.divider()
-    all_tickers = [s['ticker'] for s in universe['small']] + \
-                  [s['ticker'] for s in universe['mid']] + \
-                  [s['ticker'] for s in universe['large']]
+    
+    # Collect all tickers from results
+    all_tickers = []
+    if results['small'] is not None and not results['small'].empty:
+        all_tickers.extend(results['small']['Ticker'].tolist())
+    if results['mid'] is not None and not results['mid'].empty:
+        all_tickers.extend(results['mid']['Ticker'].tolist())
+    if results['large'] is not None and not results['large'].empty:
+        all_tickers.extend(results['large']['Ticker'].tolist())
     
     if all_tickers:
         selected_ticker = st.selectbox("📊 View Technical Chart", [""] + sorted(all_tickers))
@@ -688,6 +625,8 @@ else:
                 col_b.metric("Mid-Term Potential", f"{potential_mid:.2f}%")
                 col_c.metric("Long-Term Potential", f"{potential_long:.2f}%")
                 col_d.metric("Current RSI", f"{metrics_short.get('RSI', 50):.1f}")
+            else:
+                st.error(f"Unable to load data for {selected_ticker}")
 
 # Footer
 st.divider()
